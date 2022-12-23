@@ -1,11 +1,12 @@
 import argparse
 import os
-
+import pandas as pd
 import torch
 from torch.utils.data import DataLoader, SequentialSampler
 
+from tqdm import tqdm
 from datasets import SASRecDataset
-from models import S3RecModel
+from models import S3RecModel, BERT4RecModel
 from trainers import FinetuneTrainer
 from utils import (
     check_path,
@@ -19,12 +20,13 @@ from utils import (
 def main():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--data_dir", default="../data/train/", type=str)
+    parser.add_argument("--data_dir", default="/opt/ml/input/data/train/", type=str)
     parser.add_argument("--output_dir", default="output/", type=str)
     parser.add_argument("--data_name", default="Ml", type=str)
     parser.add_argument("--do_eval", action="store_true")
 
     # model args
+    parser.add_argument("--model", default="BERT4Rec", type=str)
     parser.add_argument("--model_name", default="Finetune_full", type=str)
     parser.add_argument(
         "--hidden_size", type=int, default=64, help="hidden size of transformer model"
@@ -87,7 +89,7 @@ def main():
     args.attribute_size = attribute_size + 1
 
     # save model args
-    args_str = f"{args.model_name}-{args.data_name}"
+    args_str = f"{args.model}-{args.data_name}"
 
     print(str(args))
 
@@ -97,14 +99,18 @@ def main():
 
     checkpoint = args_str + ".pt"
     args.checkpoint_path = os.path.join(args.output_dir, checkpoint)
+    
+    if args.model == "SASRec":
+        model = S3RecModel(args=args)
+
+    elif args.model == "BERT4Rec":
+        model = BERT4RecModel(args=args)
 
     submission_dataset = SASRecDataset(args, user_seq, data_type="submission")
     submission_sampler = SequentialSampler(submission_dataset)
     submission_dataloader = DataLoader(
         submission_dataset, sampler=submission_sampler, batch_size=args.batch_size
     )
-
-    model = S3RecModel(args=args)
 
     trainer = FinetuneTrainer(model, None, None, None, submission_dataloader, args)
 

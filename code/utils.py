@@ -68,11 +68,13 @@ class EarlyStopping:
             self.best_score = score
             self.score_min = np.array([0] * len(score))
             self.save_checkpoint(score, model)
+            
         elif self.compare(score):
             self.counter += 1
             print(f"EarlyStopping counter: {self.counter} out of {self.patience}")
             if self.counter >= self.patience:
                 self.early_stop = True
+                
         else:
             self.best_score = score
             self.save_checkpoint(score, model)
@@ -164,7 +166,7 @@ def generate_submission_file(data_file, preds):
             result.append((users[index], item))
 
     pd.DataFrame(result, columns=["user", "item"]).to_csv(
-        "output/submission.csv", index=False
+        f"output/submission.csv", index=False
     )
 
 
@@ -173,13 +175,13 @@ def get_user_seqs(data_file):
     lines = rating_df.groupby("user")["item"].apply(list)
     user_seq = []
     item_set = set()
+    
     for line in lines:
-
         items = line
         user_seq.append(items)
         item_set = item_set | set(items)
+        
     max_item = max(item_set)
-
     num_users = len(lines)
     num_items = max_item + 2
 

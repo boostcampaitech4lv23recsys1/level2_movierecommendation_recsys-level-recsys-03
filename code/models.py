@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import random
 
 from modules import Encoder, LayerNorm
 
@@ -120,14 +121,15 @@ class S3RecModel(nn.Module):
         # AAP
         aap_score = self.associated_attribute_prediction(
             sequence_output, attribute_embeddings
-        )
+        ) # [B*L tag_num]
+
         aap_loss = self.criterion(
             aap_score, attributes.view(-1, self.args.attribute_size).float()
         )
         # only compute loss at non-masked position
         aap_mask = (masked_item_sequence != self.args.mask_id).float() * (
             masked_item_sequence != 0
-        ).float()
+        ).float() # aap에서는 원래 item 속성을 찾는 거라서 mask부분과 padding 처리한 부분은 제외해서 loss 계산
         aap_loss = torch.sum(aap_loss * aap_mask.flatten().unsqueeze(-1))
 
         # MIP
@@ -139,8 +141,8 @@ class S3RecModel(nn.Module):
         mip_loss = self.criterion(
             mip_distance, torch.ones_like(mip_distance, dtype=torch.float32)
         )
-        mip_mask = (masked_item_sequence == self.args.mask_id).float()
-        mip_loss = torch.sum(mip_loss * mip_mask.flatten())
+        mip_mask = (masked_item_sequence == self.args.mask_id).float() # mask 부분의 아이템만 찾아서 loss 계산
+        mip_loss = torch.sum(mip_loss * mip_mask.flatten()) 
 
         # MAP
         map_score = self.masked_attribute_prediction(
@@ -149,7 +151,7 @@ class S3RecModel(nn.Module):
         map_loss = self.criterion(
             map_score, attributes.view(-1, self.args.attribute_size).float()
         )
-        map_mask = (masked_item_sequence == self.args.mask_id).float()
+        map_mask = (masked_item_sequence == self.args.mask_id).float() # mask 부분의 속성만 찾아서 loss 계산
         map_loss = torch.sum(map_loss * map_mask.flatten().unsqueeze(-1))
 
         # SP
@@ -191,7 +193,8 @@ class S3RecModel(nn.Module):
                 sp_distance, torch.ones_like(sp_distance, dtype=torch.float32)
             )
         )
-
+        ## aap_loss, mip_loss, map_loss은 mask를 한 부분만 사용해서 loss를 계산했지만 sp_loss는 묶음으로 mask를 적용하고 마지막 데이터만 예측하는걸로 loss 계산
+        ## 왜 그럼?? 
         return aap_loss, mip_loss, map_loss, sp_loss
 
     # Fine tune
@@ -204,7 +207,7 @@ class S3RecModel(nn.Module):
         )  # torch.int64
         max_len = attention_mask.size(-1)
         attn_shape = (1, max_len, max_len)
-        subsequent_mask = torch.triu(torch.ones(attn_shape), diagonal=1)  # torch.uint8
+        subsequent_mask = torch.triu(torch.ones(attn_shape), diagonal=1)  # torch.uint8 대각선 아래는 0으로 만드는 삼각 행렬
         subsequent_mask = (subsequent_mask == 0).unsqueeze(1)
         subsequent_mask = subsequent_mask.long()
 
@@ -223,7 +226,71 @@ class S3RecModel(nn.Module):
             sequence_emb, extended_attention_mask, output_all_encoded_layers=True
         )
 
-        sequence_output = item_encoded_layers[-1]
+        sequence_output = item_encoded_layers[-1] 
+        return sequence_output
+
+    def init_weights(self, module):
+        """Initialize the weights."""
+        if isinstance(module, (nn.Linear, nn.Embedding)):
+            # Slightly different from the TF version which uses truncated_normal for initialization
+            # cf https://github.com/pytorch/pytorch/pull/5617
+            module.weight.data.normal_(mean=0.0, std=self.args.initializer_range)
+        elif isinstance(module, LayerNorm):
+            module.bias.data.zero_()
+            module.weight.data.fill_(1.0)
+        if isinstance(module, nn.Linear) and module.bias is not None:
+            module.bias.data.zero_()
+            
+            
+            
+class BERT4RecModel(nn.Module):
+    def __init__(self, args):
+        super(BERT4RecModel, self).__init__()
+        self.item_embeddings = nn.Embedding(
+            args.item_size, args.hidden_size, padding_idx=0
+        )
+        self.attribute_embeddings = nn.Embedding(
+            args.attribute_size, args.hidden_size, padding_idx=0
+        )
+        self.position_embeddings = nn.Embedding(args.max_seq_length, args.hidden_size)
+        self.item_encoder = Encoder(args)
+        self.LayerNorm = LayerNorm(args.hidden_size, eps=1e-12)
+        self.dropout = nn.Dropout(args.hidden_dropout_prob)
+        self.args = args
+
+        self.criterion = nn.BCELoss(reduction="none")
+        self.apply(self.init_weights)
+
+    def add_position_embedding(self, sequence):
+
+        seq_length = sequence.size(1)
+        position_ids = torch.arange(
+            seq_length, dtype=torch.long, device=sequence.device
+        )
+        position_ids = position_ids.unsqueeze(0).expand_as(sequence)
+        item_embeddings = self.item_embeddings(sequence)
+        position_embeddings = self.position_embeddings(position_ids)
+        sequence_emb = item_embeddings + position_embeddings
+        sequence_emb = self.LayerNorm(sequence_emb)
+        sequence_emb = self.dropout(sequence_emb)
+
+        return sequence_emb
+
+    # Fine tune
+    # same as SASRec
+    def finetune(self, input_ids):
+
+        extended_attention_mask = torch.BoolTensor(input_ids.detach().cpu() > 0).unsqueeze(1).repeat(1, input_ids.shape[1], 1).unsqueeze(1) 
+        sequence_emb = self.add_position_embedding(input_ids)
+        
+        if self.args.cuda_condition:
+            extended_attention_mask = extended_attention_mask.cuda()
+
+        item_encoded_layers = self.item_encoder(
+            sequence_emb, extended_attention_mask, output_all_encoded_layers=True
+        )
+
+        sequence_output = item_encoded_layers[-1] 
         return sequence_output
 
     def init_weights(self, module):
