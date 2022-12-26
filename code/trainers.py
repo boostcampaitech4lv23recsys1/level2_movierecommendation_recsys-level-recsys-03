@@ -83,18 +83,19 @@ class Trainer:
         self.model.load_state_dict(torch.load(file_name))
 
     def cross_entropy(self, seq_out, pos_ids, neg_ids):
+        
         # [batch seq_len hidden_size]
         pos_emb = self.model.item_embeddings(pos_ids)
         neg_emb = self.model.item_embeddings(neg_ids)
         # [batch*seq_len hidden_size]
-        pos = pos_emb.view(-1, pos_emb.size(2))
-        neg = neg_emb.view(-1, neg_emb.size(2))
+        pos = pos_emb.view(-1, self.args.hidden_size)
+        neg = neg_emb.view(-1, self.args.hidden_size)
         seq_emb = seq_out.view(-1, self.args.hidden_size)  # [batch*seq_len hidden_size]
         pos_logits = torch.sum(pos * seq_emb, -1)  # [batch*seq_len]
         neg_logits = torch.sum(neg * seq_emb, -1)
         istarget = (
-            (pos_ids > 0).view(pos_ids.size(0) * self.model.args.max_seq_length).float()
-        )  # [batch*seq_len]
+            (pos_ids > 0).view(pos.size(0)).float()
+        )  # [batch*seq_len] <- padding으로 0이 된 부분 때문에
         loss = torch.sum(
             -torch.log(torch.sigmoid(pos_logits) + 1e-24) * istarget
             - torch.log(1 - torch.sigmoid(neg_logits) + 1e-24) * istarget
