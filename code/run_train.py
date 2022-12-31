@@ -27,6 +27,11 @@ def main():
     parser.add_argument("--output_dir", default="output/", type=str)
     parser.add_argument("--data_name", default="Ml", type=str)
 
+    # attribute json
+    parser.add_argument("--attjson", default="Ml_item2attributes.json", type=str)
+
+    
+
     # model args
     parser.add_argument("--model", default="SASRec", type=str) ##### 수정
     parser.add_argument("--model_name", default="Finetune_full", type=str)
@@ -73,6 +78,9 @@ def main():
     parser.add_argument("--gpu_id", type=str, default="0", help="gpu_id")
 
     parser.add_argument("--using_pretrain", action="store_true")
+    # pretrained .pt file name
+    parser.add_argument("--pretrain_name", default="Pretrain.pt", type=str)
+
 
     args = parser.parse_args()
 
@@ -83,7 +91,7 @@ def main():
     args.cuda_condition = torch.cuda.is_available() and not args.no_cuda
 
     args.data_file = args.data_dir + "train_ratings.csv"
-    item2attribute_file = args.data_dir + args.data_name + "_item2attributes.json"
+    item2attribute_file = args.data_dir + args.attjson
 
     user_seq, max_item, valid_rating_matrix, test_rating_matrix, _ = get_user_seqs(
         args.data_file
@@ -180,7 +188,7 @@ def main():
 
     print(args.using_pretrain)
     if args.using_pretrain:
-        pretrained_path = os.path.join(args.output_dir, "Pretrain.pt")
+        pretrained_path = os.path.join(args.output_dir, args.pretrain_name)
         try:
             trainer.load(pretrained_path)
             print(f"Load Checkpoint From {pretrained_path}!")
